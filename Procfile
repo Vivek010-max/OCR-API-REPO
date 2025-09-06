@@ -1,0 +1,1 @@
+web: gunicorn restapi_project.wsgi:application
