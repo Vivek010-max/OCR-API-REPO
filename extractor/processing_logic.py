@@ -1,5 +1,4 @@
-# extractor/processing_logic.py
-import fitz # PyMuPDF
+import fitz
 from pdf2image import convert_from_bytes
 import pytesseract
 from PIL import Image
@@ -7,54 +6,10 @@ import re
 import os
 import io
 
-# --- Your existing extraction logic (ocr_image, extract_text_from_pdf, etc.) ---
-# Paste all your functions here. Make sure they are correctly indented and
-# have the necessary imports.
-# e.g., def extract_fields(text): ...
-#       def ocr_image(img_path): ...
-
-# --- Unified file processor ---
-def process_file(file_obj):
-    """
-    Processes a file (image or PDF) and returns structured data.
-    This function acts as the bridge between Django and your core logic.
-    """
-    file_content = file_obj.read()
-    file_type = file_obj.content_type
-    
-    # Process PDF
-    if file_type == 'application/pdf':
-        doc = fitz.open(stream=file_content, filetype="pdf")
-        text = ""
-        try:
-            for page in doc:
-                text += page.get_text("text") + "\n"
-            # If text is minimal, it's a scanned PDF
-            if len(text.strip()) < 50:
-                images = convert_from_bytes(file_content)
-                for img in images:
-                    text += pytesseract.image_to_string(img, lang="eng") + "\n"
-        except Exception:
-            # Fallback to OCR if direct text extraction fails
-            images = convert_from_bytes(file_content)
-            for img in images:
-                text += pytesseract.image_to_string(img, lang="eng") + "\n"
-        
-        return extract_fields(text)
-
-    # Process Image
-    elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
-        img = Image.open(io.BytesIO(file_content))
-        text = pytesseract.image_to_string(img, lang="eng")
-        return extract_fields(text)
-
-    else:
-        raise ValueError("Unsupported file type.")
-    
-
 def extract_fields(text: str) -> dict:
     """
-    Extracts structured fields from raw text, combining logic for both PDF and image processing.
+    Extracts structured fields from raw text.
+    (Your existing, working extract_fields function goes here)
     """
     data = {
         "University": "",
@@ -66,7 +21,8 @@ def extract_fields(text: str) -> dict:
         "Date": "",
         "Statement No": "",
         "Semester": "",
-        
+        "Result": "",
+        "SPI": ""
     }
 
     clean_text = re.sub(r'\s+', ' ', text)
@@ -134,6 +90,55 @@ def extract_fields(text: str) -> dict:
     else:
         data["Semester"] = "4"
         
-    
+    # Result
+    result_match = re.search(r"Result\s*[:\-]?\s*(PASS|FAIL|ATKT)", text, re.IGNORECASE)
+    if result_match:
+        data["Result"] = result_match.group(1).upper()
+    else:
+        if "PASS" in text.upper():
+             data["Result"] = "PASS"
+        elif "FAIL" in text.upper():
+             data["Result"] = "FAIL"
+        elif "ATKT" in text.upper():
+             data["Result"] = "ATKT"
+
+    # SPI
+    spi_match = re.search(r"S[\s\.]*P[\s\.]*I\s*[:\-]?\s*([0-9]+\.[0-9]+)", text, re.IGNORECASE)
+    if spi_match:
+        data["SPI"] = spi_match.group(1)
 
     return data
+    
+# --- Unified file processor (UPDATED FOR MEMORY EFFICIENCY) ---
+def process_file(file_obj):
+    """
+    Processes a file (image or PDF) and returns structured data.
+    Optimized for memory-constrained environments.
+    """
+    file_type = file_obj.content_type
+    
+    if file_type == 'application/pdf':
+        text = ""
+        try:
+            # Try to get text directly from PDF
+            pdf_bytes = file_obj.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            for page in doc:
+                text += page.get_text("text") + "\n"
+        except Exception:
+            # Fallback for scanned/image-only PDFs using a memory-efficient approach
+            images = convert_from_bytes(pdf_bytes, first_page=1, last_page=2) # Process first two pages for efficiency
+            for img in images:
+                text += pytesseract.image_to_string(img, lang="eng") + "\n"
+
+        return extract_fields(text)
+
+    elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
+        # For single images, a direct read is generally fine for small sizes
+        img_bytes = file_obj.read()
+        img = Image.open(io.BytesIO(img_bytes))
+        text = pytesseract.image_to_string(img, lang="eng")
+        return extract_fields(text)
+
+    else:
+        raise ValueError("Unsupported file type.")
