@@ -7,6 +7,8 @@ import re
 import os
 import io
 
+
+pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 # --- Your existing extraction logic (ocr_image, extract_text_from_pdf, etc.) ---
 # Paste all your functions here. Make sure they are correctly indented and
 # have the necessary imports.
