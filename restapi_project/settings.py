@@ -39,11 +39,11 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     "corsheaders",
-    'extractor', # newly created app
+    'extractor',  # newly created app
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',   # must be first
     'django.middleware.common.CommonMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -54,7 +54,14 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+# ✅ CORS + CSRF Settings
+CORS_ALLOWED_ORIGINS = [
+    "https://frontendd-jotk.onrender.com",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://frontendd-jotk.onrender.com",
+]
 
 ROOT_URLCONF = 'restapi_project.urls'
 
@@ -128,5 +135,3 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-
