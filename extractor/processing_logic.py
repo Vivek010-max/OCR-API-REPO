@@ -1,63 +1,9 @@
 # extractor/processing_logic.py
-import fitz # PyMuPDF
-from pdf2image import convert_from_bytes
-import pytesseract
-from PIL import Image
 import re
-import os
 import io
 
-
-pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
-# --- Your existing extraction logic (ocr_image, extract_text_from_pdf, etc.) ---
-# Paste all your functions here. Make sure they are correctly indented and
-# have the necessary imports.
-# e.g., def extract_fields(text): ...
-#       def ocr_image(img_path): ...
-
-# --- Unified file processor ---
-def process_file(file_obj):
-    """
-    Processes a file (image or PDF) and returns structured data.
-    This function acts as the bridge between Django and your core logic.
-    """
-    file_content = file_obj.read()
-    file_type = file_obj.content_type
-    
-    # Process PDF
-    if file_type == 'application/pdf':
-        doc = fitz.open(stream=file_content, filetype="pdf")
-        text = ""
-        try:
-            for page in doc:
-                text += page.get_text("text") + "\n"
-            # If text is minimal, it's a scanned PDF
-            if len(text.strip()) < 50:
-                images = convert_from_bytes(file_content)
-                for img in images:
-                    text += pytesseract.image_to_string(img, lang="eng") + "\n"
-        except Exception:
-            # Fallback to OCR if direct text extraction fails
-            images = convert_from_bytes(file_content)
-            for img in images:
-                text += pytesseract.image_to_string(img, lang="eng") + "\n"
-        
-        return extract_fields(text)
-
-    # Process Image
-    elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
-        img = Image.open(io.BytesIO(file_content))
-        text = pytesseract.image_to_string(img, lang="eng")
-        return extract_fields(text)
-
-    else:
-        raise ValueError("Unsupported file type.")
-    
-
+# --- Lightweight extraction logic stays at top ---
 def extract_fields(text: str) -> dict:
-    """
-    Extracts structured fields from raw text, combining logic for both PDF and image processing.
-    """
     data = {
         "University": "",
         "Enrollment No": "",
@@ -68,7 +14,6 @@ def extract_fields(text: str) -> dict:
         "Date": "",
         "Statement No": "",
         "Semester": "",
-        
     }
 
     clean_text = re.sub(r'\s+', ' ', text)
@@ -114,10 +59,8 @@ def extract_fields(text: str) -> dict:
         data["Branch"] = "Computer Engineering"
                 
     # Subjects
-    subjects = []
     subject_codes = re.findall(r"\b(314\d{4})\b", text)
-    unique_codes = sorted(list(set(subject_codes)))
-    data["Subjects"] = unique_codes
+    data["Subjects"] = sorted(list(set(subject_codes)))
 
     # Date
     date_match = re.search(r"DATE\s*:\s*([0-9\-A-Za-z]+)", text)
@@ -135,7 +78,52 @@ def extract_fields(text: str) -> dict:
         data["Semester"] = sem_match.group(1)
     else:
         data["Semester"] = "4"
-        
-    
 
     return data
+
+# --- Deferred heavy imports for low-memory containers ---
+def process_file(file_obj):
+    import pytesseract
+    from PIL import Image
+    import fitz  # PyMuPDF
+    from pdf2image import convert_from_bytes
+    import datetime
+
+    start_time = datetime.datetime.now()
+    print(f"[OCR] Processing started at {start_time}")
+
+    pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
+
+    file_content = file_obj.read()
+    file_type = file_obj.content_type
+    text = ""
+
+    try:
+        # PDF processing
+        if file_type == 'application/pdf':
+            doc = fitz.open(stream=file_content, filetype="pdf")
+            for page in doc:
+                text += page.get_text("text") + "\n"
+
+            if len(text.strip()) < 50:
+                # Fallback to OCR
+                images = convert_from_bytes(file_content)
+                for img in images:
+                    text += pytesseract.image_to_string(img, lang="eng") + "\n"
+
+        # Image processing
+        elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
+            img = Image.open(io.BytesIO(file_content))
+            text = pytesseract.image_to_string(img, lang="eng")
+
+        else:
+            raise ValueError("Unsupported file type.")
+
+    except Exception as e:
+        print(f"[OCR] Exception: {e}")
+        text = ""
+
+    end_time = datetime.datetime.now()
+    print(f"[OCR] Processing finished at {end_time}, duration: {end_time - start_time}")
+
+    return extract_fields(text)
