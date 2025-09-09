@@ -1,23 +1,30 @@
-# Use an official Python runtime as a parent image
+# Use official Python runtime
 FROM python:3.13-slim
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Install system dependencies, including Tesseract
-RUN apt-get update && apt-get install -y tesseract-ocr
+# Install system dependencies (Tesseract + build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the working directory
+# Copy requirements first to leverage caching properly
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the working directory
+# Copy rest of the project
 COPY . .
 
-# Expose the port on which Gunicorn will listen
+# Run collectstatic (for whitenoise)
+RUN python manage.py collectstatic --noinput
+
+# Expose port
 EXPOSE 8000
 
-# Run the application using Gunicorn
+# Start Gunicorn server
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "restapi_project.wsgi:application"]
