@@ -27,4 +27,4 @@ RUN python manage.py collectstatic --noinput
 EXPOSE 8000
 
 # Start Gunicorn server
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "restapi_project.wsgi:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--log-file", "-", "restapi_project.wsgi:application"]
