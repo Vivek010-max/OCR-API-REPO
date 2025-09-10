@@ -16,32 +16,49 @@ def extract_fields(text: str) -> dict:
         "Semester": "",
     }
 
-    clean_text = re.sub(r'\s+', ' ', text)
+    # Normalize whitespace and build helpers
+    clean_text = re.sub(r"\s+", " ", text)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     # University
     if "GUJARAT TECHNOLOGICAL UNIVERSITY" in text.upper():
         data["University"] = "Gujarat Technological University"
 
-    # Enrollment No
-    enroll_match = re.search(r"\b\d{11,}\b", clean_text)
+    # Enrollment No (prefer labeled value, else 11-12 digits)
+    enroll_match = (
+        re.search(r"Enrollment\s*No\.?\s*[:\-]?\s*(\d{11,12})", text, re.IGNORECASE)
+        or re.search(r"\b(\d{11,12})\b", clean_text)
+    )
     if enroll_match:
-        data["Enrollment No"] = enroll_match.group(0)
+        data["Enrollment No"] = enroll_match.group(1)
 
-    # Student Name
-    if enroll_match:
+    # Student Name (prefer labeled; else line before enrollment; else best uppercase line heuristic)
+    name_match = re.search(r"Student\s*Name\s*[:\-]?\s*([A-Za-z][A-Za-z\s'.-]{4,})", text, re.IGNORECASE)
+    if name_match:
+        data["Student Name"] = name_match.group(1).strip().title()
+    elif data["Enrollment No"]:
         for i, line in enumerate(lines):
-            if enroll_match.group(0) in line:
-                if i > 0 and lines[i-1].isupper() and len(lines[i-1].split()) > 1:
-                    data["Student Name"] = lines[i-1].strip().title()
+            if data["Enrollment No"] in line:
+                if i > 0:
+                    prev = lines[i - 1].strip()
+                    if sum(c.isalpha() for c in prev) >= 8 and not any(ch.isdigit() for ch in prev):
+                        data["Student Name"] = prev.title()
+                break
+    if not data["Student Name"]:
+        candidates = [
+            l for l in lines if l.isupper() and len(l.split()) >= 2 and not any(ch.isdigit() for ch in l)
+        ]
+        if candidates:
+            data["Student Name"] = candidates[0].title()
 
     # Course
-    course_match = re.search(r"BACHELOR OF ENGINEERING", text, re.IGNORECASE)
-    if course_match:
+    if re.search(r"BACHELOR OF ENGINEERING", text, re.IGNORECASE):
         data["Course"] = "Bachelor of Engineering"
-    
-    # Branch
-    branch_match = re.search(r"Branch\s*[:\-]?\s*([A-Za-z\s]+)\s*\(?(?:Code[:\-]?\s*(\d+))?\)?", clean_text, re.IGNORECASE)
+
+    # Branch (prefer labeled; else next line after course)
+    branch_match = re.search(
+        r"Branch\s*[:\-]?\s*([A-Za-z\s]+?)\s*(?:\(|Code|$)", clean_text, re.IGNORECASE
+    )
     if branch_match:
         data["Branch"] = branch_match.group(1).strip().title()
     else:
@@ -52,32 +69,35 @@ def extract_fields(text: str) -> dict:
                 break
         if course_line_index != -1 and course_line_index + 1 < len(lines):
             possible_branch = lines[course_line_index + 1].strip()
-            if possible_branch.isupper() and "ENGINEERING" in possible_branch.upper():
+            if "ENGINEERING" in possible_branch.upper():
                 data["Branch"] = possible_branch.title()
-        
-    if not data["Branch"]:
-        data["Branch"] = "Computer Engineering"
-                
-    # Subjects
-    subject_codes = re.findall(r"\b(314\d{4})\b", text)
-    data["Subjects"] = sorted(list(set(subject_codes)))
 
-    # Date
-    date_match = re.search(r"DATE\s*:\s*([0-9\-A-Za-z]+)", text)
+    # Subjects (codes like 314xxxx; accept broader 31xxxxx as fallback)
+    subject_codes = set(re.findall(r"\b(314\d{4})\b", text))
+    if len(subject_codes) < 4:
+        subject_codes.update(re.findall(r"\b(31\d{5})\b", text))
+    data["Subjects"] = sorted(list(subject_codes))
+
+    # Date (label or DD-MMM-YYYY)
+    date_match = (
+        re.search(r"DATE\s*[:\-]?\s*([0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})", text, re.IGNORECASE)
+        or re.search(r"\b([0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})\b", text)
+    )
     if date_match:
         data["Date"] = date_match.group(1)
-        
-    # Statement No
-    stmt_match = re.search(r"MAY-2025\s*([A-Z0-9]+)", text, re.IGNORECASE)
+
+    # Statement No (label or pattern like S#########)
+    stmt_match = (
+        re.search(r"Statement\s*No\.?\s*[:\-]?\s*([A-Z0-9]{6,})", text, re.IGNORECASE)
+        or re.search(r"\bS\d{9,}\b", text)
+    )
     if stmt_match:
         data["Statement No"] = stmt_match.group(1)
-        
+
     # Semester
-    sem_match = re.search(r"Sem\w*\s*[:\-]?\s*(\d+)", text, re.IGNORECASE)
+    sem_match = re.search(r"Sem(?:ester)?\s*[:\-]?\s*(\d{1,2})", text, re.IGNORECASE)
     if sem_match:
         data["Semester"] = sem_match.group(1)
-    else:
-        data["Semester"] = "4"
 
     return data
 
@@ -106,14 +126,17 @@ def process_file(file_obj):
         # PDF processing
         if file_type == 'application/pdf':
             doc = fitz.open(stream=file_content, filetype="pdf")
+            # 1) Extract embedded text
             for page in doc:
                 text += page.get_text("text") + "\n"
-
-            if len(text.strip()) < 50:
-                # Fallback to OCR
-                images = convert_from_bytes(file_content)
+            # 2) OCR pages if text looks sparse
+            if len(text.strip()) < 200:
+                images = convert_from_bytes(file_content, fmt='png')
                 for img in images:
-                    text += pytesseract.image_to_string(img, lang="eng") + "\n"
+                    try:
+                        text += pytesseract.image_to_string(img, lang="eng", config="--oem 1 --psm 6", timeout=25) + "\n"
+                    except Exception:
+                        continue
 
         # Image processing
         elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
@@ -127,9 +150,21 @@ def process_file(file_obj):
             scale = min(1.0, max_side / float(max(w, h)))
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)))
+            # Basic binarization to improve OCR
+            try:
+                from PIL import ImageOps, ImageFilter
+                if img.mode != "L":
+                    gray = img.convert("L")
+                else:
+                    gray = img
+                gray = ImageOps.autocontrast(gray)
+                gray = gray.filter(ImageFilter.SHARPEN)
+                bw = gray.point(lambda x: 0 if x < 140 else 255, '1')
+            except Exception:
+                bw = img
             # Run tesseract with reasonable defaults and timeout
             text = pytesseract.image_to_string(
-                img,
+                bw,
                 lang="eng",
                 config="--oem 1 --psm 6",
                 timeout=20,
