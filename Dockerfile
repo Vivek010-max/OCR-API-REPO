@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     zlib1g-dev \
     libpng-dev \
-    libtiff5 \
+    libtiff-dev \
     libopenjp2-7 \
     gcc \
     build-essential \
