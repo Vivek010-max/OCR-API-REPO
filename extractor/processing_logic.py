@@ -88,11 +88,15 @@ def process_file(file_obj):
     import fitz  # PyMuPDF
     from pdf2image import convert_from_bytes
     import datetime
+    import os
 
     start_time = datetime.datetime.now()
     print(f"[OCR] Processing started at {start_time}")
 
+    # Configure tesseract path for Linux container
     pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
+    # Ensure tessdata is discoverable
+    os.environ.setdefault('TESSDATA_PREFIX', '/usr/share/tesseract-ocr/5/tessdata')
 
     file_content = file_obj.read()
     file_type = file_obj.content_type
@@ -114,7 +118,22 @@ def process_file(file_obj):
         # Image processing
         elif file_type in ['image/jpeg', 'image/png', 'image/tiff']:
             img = Image.open(io.BytesIO(file_content))
-            text = pytesseract.image_to_string(img, lang="eng")
+            # Normalize colorspace
+            if img.mode not in ("L", "RGB"):
+                img = img.convert("RGB")
+            # Scale down very large images to control CPU/memory
+            max_side = 2200
+            w, h = img.size
+            scale = min(1.0, max_side / float(max(w, h)))
+            if scale < 1.0:
+                img = img.resize((int(w * scale), int(h * scale)))
+            # Run tesseract with reasonable defaults and timeout
+            text = pytesseract.image_to_string(
+                img,
+                lang="eng",
+                config="--oem 1 --psm 6",
+                timeout=20,
+            )
 
         else:
             raise ValueError("Unsupported file type.")
